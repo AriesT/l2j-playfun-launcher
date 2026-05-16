@@ -318,7 +318,7 @@ class LauncherApp:
                 f"{API_URL}?action=manifest",
                 headers={"User-Agent": "L2JPlayFun-Launcher"}
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=120) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             if "error" in data:
                 raise Exception(f"Server error: {data['error']}")
@@ -413,7 +413,7 @@ class LauncherApp:
                 f"{API_URL}?action=manifest",
                 headers={"User-Agent": "L2JPlayFun-Launcher"}
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=120) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             files = data.get("files", [])
             total = len(files)
