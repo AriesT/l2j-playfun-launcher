@@ -1,0 +1,64 @@
+name: Build Launcher EXE
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'launcher/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        
+    - name: Install PyInstaller
+      run: pip install pyinstaller
+      
+    - name: Build EXE
+      working-directory: ./launcher
+      run: |
+        pyinstaller --noconfirm --onefile --windowed `
+          --name "L2J-PlayFun-Launcher" `
+          --add-data "launcher.ico;." `
+          --add-data "logo_128.png;." `
+          --icon=launcher.ico `
+          L2JPlayFun-Launcher.py
+          
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: L2J-PlayFun-Launcher
+        path: launcher/dist/L2J-PlayFun-Launcher.exe
+        
+    - name: Create Release
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ github.run_number }}
+        name: Release v${{ github.run_number }}
+        body: |
+          L2J Play Fun Launcher — автоматична збірка
+          
+          ## Зміни
+          - Остання версія лаунчера
+          
+          ## Як користуватися
+          1. Скачайте `L2J-PlayFun-Launcher.exe`
+          2. Запустіть — все працює без Python!
+        files: launcher/dist/L2J-PlayFun-Launcher.exe
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
