@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-L2J Play Fun Launcher
-=====================
+L2J Play Fun Launcher v3
+========================
 Windows launcher for Lineage II server.
-Requires: Python 3.7+ with tkinter
 """
 
 import os
@@ -16,14 +15,39 @@ import urllib.request
 import urllib.error
 from tkinter import (
     Tk, Frame, Label, Button, Entry, StringVar, IntVar,
-    filedialog, messagebox, ttk, Canvas
+    filedialog, messagebox, ttk, PhotoImage
 )
 import subprocess
 import shutil
 
 # ─── CONFIG ───────────────────────────────────────────────────────
-SERVER_URL = "http://188.40.83.149"
+# Server URL can be overridden by config.ini in same folder
+CONFIG_FILE = "launcher_config.ini"
+
+def load_server_url():
+    """Load server URL from config if exists, otherwise default."""
+    exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    config_path = os.path.join(exe_dir, CONFIG_FILE)
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("server_url="):
+                        return line.split("=", 1)[1].strip()
+        except Exception:
+            pass
+    return "http://la2play.fun:8080"
+
+SERVER_URL = load_server_url()
 API_URL = f"{SERVER_URL}/launcher/api.php"
+STATUS_URL = f"{SERVER_URL}/api.php"
+
+# Fallback to default if config doesn't specify port
+if "http://la2play.fun:8080" in SERVER_URL and ":" not in SERVER_URL.replace("://", ""):
+    SERVER_URL = "http://la2play.fun:8080"
+    API_URL = f"{SERVER_URL}/launcher/api.php"
+    STATUS_URL = f"{SERVER_URL}/api.php"
 GAME_DIR_NAME = "Lineage2PlayFun"
 START_BAT = "system/startl2.bat"
 EXE_NAME = "l2.exe"
@@ -31,7 +55,6 @@ VERSION_FILE = "version.txt"
 # ──────────────────────────────────────────────────────────────────
 
 def resource_path(relative_path):
-    """Get absolute path to resource, works for dev and for PyInstaller."""
     try:
         base_path = sys._MEIPASS
     except Exception:
@@ -69,8 +92,9 @@ class ServerStatus:
         def fetch():
             try:
                 req = urllib.request.Request(
-                    f"{SERVER_URL}/api.php?action=status",
-                    headers={"User-Agent": "L2JPlayFun-Launcher"}
+                    f"{STATUS_URL}?action=status",
+                    headers={"User-Agent": "L2JPlayFun-Launcher"},
+                    timeout=5
                 )
                 with urllib.request.urlopen(req, timeout=5) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
@@ -81,10 +105,11 @@ class ServerStatus:
                         "ONLINE" if data.get("game_status") == "online" else "OFFLINE"
                     )
                     self.players_var.set(str(data.get("players_online", "—")))
-            except Exception:
+            except Exception as e:
                 self.login_var.set("?")
                 self.game_var.set("?")
                 self.players_var.set("?")
+                print(f"[DEBUG] Status error: {e}")  # Log to console for debugging
         threading.Thread(target=fetch, daemon=True).start()
         self.frame.after(10000, self.refresh_status)
 
@@ -93,11 +118,10 @@ class LauncherApp:
     def __init__(self, root):
         self.root = root
         self.root.title("L2J Play Fun — Launcher")
-        self.root.geometry("700x620")
+        self.root.geometry("720x640")
         self.root.configure(bg="#0a0e1a")
         self.root.resizable(False, False)
 
-        # Icon
         try:
             self.root.iconbitmap(resource_path("launcher.ico"))
         except Exception:
@@ -122,7 +146,9 @@ class LauncherApp:
         if os.path.exists(config):
             try:
                 with open(config, "r", encoding="utf-8") as f:
-                    self.game_path.set(f.read().strip())
+                    saved = f.read().strip()
+                    if saved:
+                        self.game_path.set(os.path.normpath(saved))
             except Exception:
                 pass
 
@@ -135,55 +161,46 @@ class LauncherApp:
             pass
 
     def build_ui(self):
-        # Header frame with image
         header = Frame(self.root, bg="#0a0e1a", height=160)
         header.pack(fill="x")
         header.pack_propagate(False)
 
-        # Try to show logo image
         try:
-            from tkinter import PhotoImage
             img_path = resource_path("logo_128.png")
             if os.path.exists(img_path):
                 self.logo_img = PhotoImage(file=img_path)
-                img_label = Label(header, image=self.logo_img, bg="#0a0e1a")
-                img_label.pack(pady=(10, 0))
+                Label(header, image=self.logo_img, bg="#0a0e1a").pack(pady=(10, 0))
         except Exception:
             pass
 
-        # Server name
         Label(header, text="L2J PLAY FUN", font=("Orbitron", 24, "bold"),
               bg="#0a0e1a", fg="#d4af37").pack(pady=(5, 0))
         Label(header, text="EPIC CHRONICLES — HIGH FIVE", font=("Segoe UI", 9),
               bg="#0a0e1a", fg="#4a90d9").pack()
 
-        # Server Status
         self.status_widget = ServerStatus(self.root, self.root)
 
-        # Main content frame
         content = Frame(self.root, bg="#0a0e1a")
         content.pack(fill="both", expand=True, padx=30, pady=10)
 
-        # Directory selection
         dir_frame = Frame(content, bg="#0a0e1a")
         dir_frame.pack(fill="x", pady=5)
 
         Label(dir_frame, text="Директорія:", font=("Segoe UI", 10),
               bg="#0a0e1a", fg="#ccc").pack(side="left")
 
-        Entry(dir_frame, textvariable=self.game_path, font=("Segoe UI", 9),
-              bg="#12182e", fg="#fff", insertbackground="#fff",
-              relief="flat", width=40, state="readonly").pack(side="left", padx=5)
+        self.path_entry = Entry(dir_frame, textvariable=self.game_path, font=("Segoe UI", 9),
+                                bg="#12182e", fg="#fff", insertbackground="#fff",
+                                relief="flat", width=42, state="readonly")
+        self.path_entry.pack(side="left", padx=5)
 
         btn_style = {"font": ("Segoe UI", 9, "bold"), "bg": "#1a2a4a",
                      "fg": "#4a90d9", "activebackground": "#2a3a5a",
                      "activeforeground": "#fff", "relief": "flat",
                      "padx": 15, "pady": 5, "cursor": "hand2"}
 
-        Button(dir_frame, text="Вибрати...", command=self.select_dir,
-               **btn_style).pack(side="left", padx=5)
+        Button(dir_frame, text="Вибрати...", command=self.select_dir, **btn_style).pack(side="left", padx=5)
 
-        # Version info
         ver_frame = Frame(content, bg="#0a0e1a")
         ver_frame.pack(fill="x", pady=5)
 
@@ -196,15 +213,23 @@ class LauncherApp:
         Label(ver_frame, textvariable=self.remote_version, font=("Segoe UI", 9, "bold"),
               bg="#0a0e1a", fg="#4a90d9").pack(side="left", padx=5)
 
-        # Progress
+        Frame(content, bg="#1a1f35", height=1).pack(fill="x", pady=10)
+
+        api_frame = Frame(content, bg="#0a0e1a")
+        api_frame.pack(fill="x", pady=5)
+        Label(api_frame, text="API сервер:", font=("Segoe UI", 8),
+              bg="#0a0e1a", fg="#666").pack(side="left")
+        Label(api_frame, text=SERVER_URL, font=("Segoe UI", 8),
+              bg="#0a0e1a", fg="#888").pack(side="left", padx=5)
+
         self.progress_bar = ttk.Progressbar(content, variable=self.progress,
                                            maximum=100, length=500, mode="determinate")
         self.progress_bar.pack(fill="x", pady=10)
 
-        Label(content, textvariable=self.status_text, font=("Segoe UI", 9),
-              bg="#0a0e1a", fg="#aaa").pack()
+        self.status_label = Label(content, textvariable=self.status_text, font=("Segoe UI", 9),
+                                   bg="#0a0e1a", fg="#aaa", wraplength=500)
+        self.status_label.pack()
 
-        # Buttons
         btn_frame = Frame(content, bg="#0a0e1a")
         btn_frame.pack(pady=15)
 
@@ -235,16 +260,17 @@ class LauncherApp:
                                  activebackground="#8e0000", **action_style)
         self.btn_delete.pack(side="left", padx=5)
 
-        # Footer
         footer = Frame(self.root, bg="#0a0e1a")
         footer.pack(fill="x", pady=(0, 10))
-        Label(footer, text="L2J Play Fun Launcher v1.0",
+        Label(footer, text="L2J Play Fun Launcher v3.0 | github.com/AriesT/l2j-playfun-launcher",
               font=("Segoe UI", 8), bg="#0a0e1a", fg="#444").pack()
 
     def select_dir(self):
         path = filedialog.askdirectory(title="Виберіть директорію для гри")
         if path:
-            self.game_path.set(os.path.join(path, GAME_DIR_NAME))
+            # Normalize path for Windows (handle mixed slashes)
+            full_path = os.path.normpath(os.path.join(path, GAME_DIR_NAME))
+            self.game_path.set(full_path)
             self.save_path()
             self.check_version()
 
@@ -266,13 +292,15 @@ class LauncherApp:
             try:
                 req = urllib.request.Request(
                     f"{API_URL}?action=version",
-                    headers={"User-Agent": "L2JPlayFun-Launcher"}
+                    headers={"User-Agent": "L2JPlayFun-Launcher"},
+                    timeout=5
                 )
                 with urllib.request.urlopen(req, timeout=5) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     self.remote_version.set(data.get("version", "—"))
-            except Exception:
+            except Exception as e:
                 self.remote_version.set("?")
+                print(f"[DEBUG] Version check error: {e}")
         threading.Thread(target=fetch_remote, daemon=True).start()
 
     def get_full_game_dir(self):
@@ -296,12 +324,19 @@ class LauncherApp:
             self.set_status("Отримання списку файлів...", 5)
             req = urllib.request.Request(
                 f"{API_URL}?action=manifest",
-                headers={"User-Agent": "L2JPlayFun-Launcher"}
+                headers={"User-Agent": "L2JPlayFun-Launcher"},
+                timeout=30
             )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
 
+            if "error" in data:
+                raise Exception(f"Server error: {data['error']}")
+
             files = data.get("files", [])
+            if not files:
+                raise Exception("Файли гри не знайдені на сервері")
+
             total = len(files)
             remote_version = data.get("version", "1.0.0")
 
@@ -311,18 +346,25 @@ class LauncherApp:
                 rel_path = f_info["path"]
                 file_url = f_info["url"]
                 expected_md5 = f_info["md5"]
-                local_file = os.path.join(game_dir, rel_path.replace("/", os.sep))
+                # Use os.path.sep for correct cross-platform paths
+                rel_path_fixed = rel_path.replace("/", os.sep)
+                local_file = os.path.join(game_dir, rel_path_fixed)
 
                 os.makedirs(os.path.dirname(local_file), exist_ok=True)
 
+                # Check if already exists and valid
                 if os.path.exists(local_file):
-                    if self.get_md5(local_file) == expected_md5:
+                    local_md5 = self.get_md5(local_file)
+                    if local_md5 and local_md5 == expected_md5:
+                        self.set_status(f"[{i+1}/{total}] {rel_path} — актуальний", 
+                                       10 + int((i / total) * 85))
                         continue
 
                 self.set_status(f"[{i+1}/{total}] {rel_path}",
                                10 + int((i / total) * 85))
                 self.download_file(file_url, local_file, expected_md5)
 
+            # Save version
             with open(os.path.join(game_dir, VERSION_FILE), "w") as vf:
                 vf.write(remote_version)
 
@@ -330,6 +372,14 @@ class LauncherApp:
             self.set_status("✅ Встановлення завершено!", 100)
             messagebox.showinfo("Готово", "Гру успішно встановлено!")
 
+        except urllib.error.HTTPError as e:
+            self.set_status(f"❌ HTTP помилка {e.code}: сервер недоступний", 0)
+            messagebox.showerror("Помилка сервера", 
+                f"Не вдалося підключитися до сервера ({SERVER_URL}).\n\n"
+                f"Переконайтеся, що:\n"
+                f"• У вас є інтернет-з'єднання\n"
+                f"• Сервер онлайн\n"
+                f"• Порт 80 відкритий (якщо ви адміністратор сервера)")
         except Exception as e:
             self.set_status(f"❌ Помилка: {e}", 0)
             messagebox.showerror("Помилка", str(e))
@@ -357,14 +407,16 @@ class LauncherApp:
                             break
                         f.write(chunk)
         except urllib.error.HTTPError as e:
-            if e.code == 416:
+            if e.code == 416:  # Range not satisfiable - file already complete
                 pass
             else:
                 raise
 
-        if self.get_md5(temp_path) != expected_md5:
+        # Verify MD5
+        actual_md5 = self.get_md5(temp_path)
+        if actual_md5 != expected_md5:
             os.remove(temp_path)
-            raise Exception(f"MD5 mismatch for {os.path.basename(local_path)}")
+            raise Exception(f"MD5 не співпадає для {os.path.basename(local_path)}")
 
         os.replace(temp_path, local_path)
 
@@ -395,7 +447,8 @@ class LauncherApp:
 
             req = urllib.request.Request(
                 f"{API_URL}?action=manifest",
-                headers={"User-Agent": "L2JPlayFun-Launcher"}
+                headers={"User-Agent": "L2JPlayFun-Launcher"},
+                timeout=30
             )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
@@ -428,6 +481,9 @@ class LauncherApp:
             self.set_status(msg.replace("\n", " | "), 100)
             messagebox.showinfo("Готово", msg)
 
+        except urllib.error.HTTPError as e:
+            self.set_status(f"❌ HTTP помилка {e.code}", 0)
+            messagebox.showerror("Помилка", f"Сервер недоступний ({SERVER_URL})")
         except Exception as e:
             self.set_status(f"❌ Помилка: {e}", 0)
             messagebox.showerror("Помилка", str(e))
@@ -437,7 +493,6 @@ class LauncherApp:
 
     def launch_game(self):
         game_dir = self.get_full_game_dir()
-        bat_path = os.path.join(game_dir, START_BAT)
         exe_path = os.path.join(game_dir, "system", EXE_NAME)
 
         if not os.path.exists(exe_path):
@@ -449,7 +504,8 @@ class LauncherApp:
             subprocess.Popen(
                 [EXE_NAME, "IP=188.40.83.149"],
                 cwd=sys_dir,
-                shell=False
+                shell=False,
+                creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
             )
             self.set_status("🎮 Гра запущена!", 100)
         except Exception as e:
