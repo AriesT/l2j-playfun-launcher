@@ -15,7 +15,7 @@ import threading
 import urllib.request
 import urllib.error
 from tkinter import (
-    Tk, Frame, Label, Button, StringVar, IntVar,
+    Tk, Frame, Label, Button, Entry, StringVar, IntVar,
     filedialog, messagebox, ttk, Canvas
 )
 import subprocess
