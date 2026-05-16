@@ -6,6 +6,8 @@ on:
     paths:
       - 'launcher/**'
       - '.github/workflows/**'
+      - '*.txt'
+      - '*.spec'
   workflow_dispatch:
 
 permissions:
@@ -26,21 +28,15 @@ jobs:
     - name: Install PyInstaller
       run: pip install pyinstaller
       
-    - name: Build EXE
-      working-directory: ./launcher
+    - name: Build EXE with metadata
       run: |
-        pyinstaller --noconfirm --onefile --windowed `
-          --name "L2J-PlayFun-Launcher" `
-          --add-data "launcher.ico;." `
-          --add-data "logo_128.png;." `
-          --icon=launcher.ico `
-          L2JPlayFun-Launcher.py
+        pyinstaller --noconfirm L2JPlayFun-Launcher.spec
           
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: L2J-PlayFun-Launcher
-        path: launcher/dist/L2J-PlayFun-Launcher.exe
+        path: dist/L2J-PlayFun-Launcher.exe
         
     - name: Create Release
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
@@ -51,13 +47,13 @@ jobs:
         body: |
           L2J Play Fun Launcher — автоматична збірка
           
-          ## Зміни
-          - Остання версія лаунчера
+          ⚠️ Примітка безпеки: Оскільки ця програма не підписана付费 сертифікатом, Windows Defender та Chrome можуть показувати попередження. Це нормально для безкоштовних ігрових лаунчерів. Натисніть «Детальніше» → «Виконати в будь-якому випадку» / «Keep anyway».
           
           ## Як користуватися
           1. Скачайте `L2J-PlayFun-Launcher.exe`
-          2. Запустіть — все працює без Python!
-        files: launcher/dist/L2J-PlayFun-Launcher.exe
+          2. Якщо з'явиться попередження Windows — натисніть «More info» → «Run anyway»
+          3. Лаунчер працює без встановлення Python!
+        files: dist/L2J-PlayFun-Launcher.exe
         draft: false
         prerelease: false
       env:
