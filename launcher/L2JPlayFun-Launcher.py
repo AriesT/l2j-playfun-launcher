@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-L2J Play Fun Launcher v10
+L2J Play Fun Launcher v11
 =========================
 Windows launcher for Lineage II server.
 - Parallel downloads (8 threads)
@@ -146,7 +146,7 @@ class LauncherApp:
         except Exception:
             pass
         self.game_path = StringVar()
-        self.status_text = StringVar(value="Виберіть директорію та натисніть Встановити")
+        self.status_text = StringVar(value="Виберіть директорію та натисніть Перевірити")
         self.progress = IntVar(value=0)
         self.speed_text = StringVar(value="")
         self.local_version = StringVar(value="Немає")
@@ -345,13 +345,8 @@ class LauncherApp:
               bg="#0a0e1a", fg="#aaa", wraplength=500).pack()
         btn_frame = Frame(content, bg="#0a0e1a")
         btn_frame.pack(pady=15)
-        action_style = {"font": ("Segoe UI", 10, "bold"), "width": 14,
+        action_style = {"font": ("Segoe UI", 10, "bold"), "width": 18,
                         "relief": "flat", "padx": 10, "pady": 8, "cursor": "hand2"}
-        self.btn_install = Button(btn_frame, text="⬇ Встановити",
-                                  command=self.start_install,
-                                  bg="#2e7d32", fg="#fff",
-                                  activebackground="#1b5e20", **action_style)
-        self.btn_install.pack(side="left", padx=5)
         self.btn_verify = Button(btn_frame, text="🔍 Перевірити",
                                  command=self.start_verify,
                                  bg="#1565c0", fg="#fff",
@@ -369,7 +364,7 @@ class LauncherApp:
         self.btn_delete.pack(side="left", padx=5)
         footer = Frame(self.root, bg="#0a0e1a")
         footer.pack(fill="x", pady=(0, 10))
-        Label(footer, text="L2J Play Fun Launcher v10.0 | github.com/AriesT/l2j-playfun-launcher",
+        Label(footer, text="L2J Play Fun Launcher v11.0 | github.com/AriesT/l2j-playfun-launcher",
               font=("Segoe UI", 8), bg="#0a0e1a", fg="#444").pack()
 
     def save_server_settings(self):
@@ -421,14 +416,6 @@ class LauncherApp:
     def get_full_game_dir(self):
         return self.game_path.get()
 
-    def start_install(self):
-        if self.is_installing:
-            return
-        if not self.game_path.get():
-            self.show_alert("Помилка", "Спочатку виберіть директорію!", "error")
-            return
-        threading.Thread(target=self._safe_thread, args=(self.install_game,), daemon=True).start()
-
     def start_verify(self):
         if self.is_installing:
             return
@@ -450,136 +437,15 @@ class LauncherApp:
             self.root.after(0, lambda: self.set_buttons_state("normal"))
             self.is_installing = False
 
-    def install_game(self):
-        self.is_installing = True
-        self.set_buttons_state("disabled")
-        self.download_stats = None
-        self.stop_ui_update = threading.Event()
-        try:
-            game_dir = self.get_full_game_dir()
-            os.makedirs(game_dir, exist_ok=True)
-            self.set_status("Отримання списку файлів...", 5)
-            self.set_speed_text("")
-            req = urllib.request.Request(
-                f"{API_URL}?action=manifest",
-                headers={"User-Agent": "L2JPlayFun-Launcher"}
-            )
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            if "error" in data:
-                raise Exception(f"Server error: {data['error']}")
-            files = data.get("files", [])
-            if not files:
-                raise Exception("Файли гри не знайдені на сервері")
-            total = len(files)
-            remote_version = data.get("version", "1.0.0")
-
-            # Determine which files actually need downloading
-            files_to_download = []
-            self.set_status(f"Аналіз {total} файлів...", 8)
-            for f_info in files:
-                rel_path = f_info["path"]
-                expected_md5 = f_info["md5"]
-                local_file = os.path.join(game_dir, rel_path.replace("/", os.sep))
-                if os.path.exists(local_file):
-                    local_md5 = self.get_md5(local_file)
-                    if local_md5 and local_md5 == expected_md5:
-                        continue
-                files_to_download.append(f_info)
-
-            if not files_to_download:
-                self._write_version(game_dir, remote_version)
-                self.set_status("✅ Всі файли актуальні!", 100)
-                self.set_speed_text("")
-                self.show_alert("Готово", "Всі файли вже актуальні.", "info")
-                return
-
-            # Shared stats for UI updates
-            self.download_stats = {
-                "processed": 0,
-                "total": len(files_to_download),
-                "start_time": time.time(),
-                "total_bytes": 0,
-                "lock": threading.Lock(),
-                "errors": [],
-                "cancelled": False,
-            }
-
-            def download_worker(f_info):
-                if self.download_stats["cancelled"]:
-                    return
-                rel_path = f_info["path"]
-                file_url = f_info["url"]
-                expected_md5 = f_info["md5"]
-                local_file = os.path.join(game_dir, rel_path.replace("/", os.sep))
-                try:
-                    bytes_dl = self.download_file_with_size(file_url, local_file, expected_md5)
-                    with self.download_stats["lock"]:
-                        self.download_stats["processed"] += 1
-                        self.download_stats["total_bytes"] += bytes_dl
-                except Exception as e:
-                    with self.download_stats["lock"]:
-                        self.download_stats["errors"].append(f"{rel_path}: {e}")
-                        self.download_stats["cancelled"] = True
-
-            # Start UI update background thread
-            ui_thread = threading.Thread(target=self._ui_update_loop, daemon=True)
-            ui_thread.start()
-
-            max_workers = min(DOWNLOAD_WORKERS, len(files_to_download))
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(download_worker, f) for f in files_to_download]
-                concurrent.futures.wait(futures)
-
-            self.stop_ui_update.set()
-
-            if self.download_stats["errors"]:
-                err_msg = "\n".join(self.download_stats["errors"][:5])
-                raise Exception(f"Помилки завантаження:\n{err_msg}")
-
-            self._write_version(game_dir, remote_version)
-            self.set_status("✅ Встановлення завершено!", 100)
-            self.set_speed_text("")
-            self.show_alert("Готово", "Гру успішно встановлено!", "info")
-        except urllib.error.HTTPError as e:
-            self.set_status(f"❌ HTTP помилка {e.code}: сервер недоступний", 0)
-            self.show_alert("Помилка сервера",
-                f"Не вдалося підключитися до сервера ({SERVER_URL}).\n\n"
-                f"Переконайтеся, що у вас є інтернет-з'єднання.", "error")
-        except Exception as e:
-            self.set_status(f"❌ Помилка: {e}", 0)
-            self.show_alert("Помилка", str(e), "error")
-        finally:
-            self.is_installing = False
-            self.set_buttons_state("normal")
-            self.stop_ui_update.set()
-
     def _write_version(self, game_dir, version):
         """Write version.txt and update UI."""
         try:
-            with open(os.path.join(game_dir, VERSION_FILE), "w") as vf:
+            ver_path = os.path.join(game_dir, VERSION_FILE)
+            with open(ver_path, "w") as vf:
                 vf.write(version)
             self.root.after(0, lambda: self.local_version.set(version))
         except Exception as e:
             raise Exception(f"Не вдалося зберегти версію: {e}")
-
-    def _ui_update_loop(self):
-        """Background thread updating speed and progress every 500ms."""
-        while not self.stop_ui_update.is_set():
-            if self.download_stats is None:
-                time.sleep(0.5)
-                continue
-            with self.download_stats["lock"]:
-                processed = self.download_stats["processed"]
-                total = self.download_stats["total"]
-                total_bytes = self.download_stats["total_bytes"]
-                elapsed = time.time() - self.download_stats["start_time"]
-            if elapsed > 0 and total > 0:
-                speed_mbps = (total_bytes / (1024 * 1024)) / elapsed
-                progress = 10 + int((processed / total) * 85)
-                self.set_speed_text(f"⚡ {speed_mbps:.2f} MB/s")
-                self.set_status(f"Завантаження... {processed}/{total} файлів", progress)
-            time.sleep(0.5)
 
     def download_file_with_size(self, url, local_path, expected_md5):
         """Download file and return number of bytes downloaded."""
@@ -627,6 +493,7 @@ class LauncherApp:
         try:
             game_dir = self.get_full_game_dir()
             self.set_status("Отримання списку файлів...", 5)
+            self.set_speed_text("")
             req = urllib.request.Request(
                 f"{API_URL}?action=manifest",
                 headers={"User-Agent": "L2JPlayFun-Launcher"}
@@ -666,20 +533,20 @@ class LauncherApp:
                                int((i / total) * 100))
                 if not os.path.exists(local_file):
                     missing += 1
-                    # Show downloading status for this specific file
-                    self.set_status(f"[{i+1}/{total}] ⬇ Завантаження {rel_path}...",
-                                   int((i / total) * 100))
+                    self.set_speed_text(f"⬇ Завантаження {os.path.basename(rel_path)}...")
                     self.download_file_with_size(f_info["url"], local_file, expected_md5)
+                    self.set_speed_text("")
                 elif self.get_md5(local_file) != expected_md5:
                     corrupted += 1
-                    self.set_status(f"[{i+1}/{total}] ⬇ Завантаження {rel_path}...",
-                                   int((i / total) * 100))
+                    self.set_speed_text(f"⬇ Завантаження {os.path.basename(rel_path)}...")
                     self.download_file_with_size(f_info["url"], local_file, expected_md5)
+                    self.set_speed_text("")
 
             # Delete orphaned files
             deleted_orphaned = 0
             if orphaned_files:
                 self.set_status(f"🗑 Видалення зайвих файлів...", 95)
+                self.set_speed_text("")
                 for op in orphaned_files:
                     try:
                         os.remove(op)
@@ -732,73 +599,50 @@ class LauncherApp:
         if not os.path.exists(exe_path):
             raise Exception(f"Файл гри не знайдено:\n{exe_path}\n\nСпочатку встановіть гру.")
 
-        # Try launching the game
-        try:
-            if os.name == 'nt':
-                subprocess.Popen(
-                    [exe_path, f"IP={SERVER_IP}"],
-                    cwd=sys_dir,
-                    shell=False,
-                    creationflags=0
-                )
-            else:
-                subprocess.Popen(
-                    [exe_path, f"IP={SERVER_IP}"],
-                    cwd=sys_dir,
-                    shell=False
-                )
-            self.set_status("🎮 Гра запущена!", 100)
-        except Exception as e:
-            # Broad check for elevation error (740)
-            err_str = str(e).lower()
-            is_elevation_error = (
-                getattr(e, 'winerror', 0) == 740 or
-                getattr(e, 'errno', 0) == 740 or
-                '740' in err_str or
-                'elevation' in err_str or
-                'requires elevation' in err_str
-            )
-            if is_elevation_error and os.name == 'nt':
-                self._try_elevated_launch(exe_path, sys_dir)
-            else:
-                raise Exception(f"Не вдалося запустити гру: {e}")
-
-    def _try_elevated_launch(self, exe_path, sys_dir):
-        """Try to launch with UAC elevation using ShellExecuteW."""
+        # On Windows use ShellExecuteW to handle UAC properly (no error dialogs)
         if os.name == 'nt':
             import ctypes
             try:
                 ret = ctypes.windll.shell32.ShellExecuteW(
-                    None, "runas", exe_path,
+                    None, None, exe_path,
                     f"IP={SERVER_IP}", sys_dir, 1
                 )
                 if ret <= 32:
-                    # Error codes: https://docs.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
-                    if ret == 5:
-                        raise Exception("Відмовлено в доступі (користувач відхилив UAC)")
-                    elif ret == 8:
-                        raise Exception("Недостатньо пам'яті")
-                    elif ret == 27:
-                        raise Exception("Помилка асоціації файлу")
-                    elif ret == 31:
-                        raise Exception("Не знайдено програму для запуску .exe")
-                    elif ret == 1155:
-                        raise Exception("Не вказано програму для відкриття цього файлу")
-                    else:
-                        raise Exception(f"ShellExecute повернув код помилки {ret}")
-                # If ret > 32, ShellExecute succeeded — UAC prompt was shown
-                self.set_status("🎮 Запит прав адміністратора відправлено. Підтвердіть UAC.", 100)
-            except Exception as e2:
-                # If ShellExecuteW itself failed, show instructions
-                raise Exception(
-                    f"Гра потребує прав адміністратора для запуску.\n\n"
-                    f"Варіанти вирішення:\n"
-                    f"1. Натисніть кнопку Запустити — з'явиться запит UAC → Підтвердіть\n"
-                    f"2. Закрийте лаунчер, натисніть ПКМ на ярлику → Запустити від імені адміністратора\n\n"
-                    f"Технічна інформація: {e2}"
-                )
+                    # Error codes from ShellExecuteW
+                    err_msgs = {
+                        0: "Не вистачає пам'яті",
+                        2: "Файл не знайдено",
+                        3: "Шлях не знайдено",
+                        5: "Доступ заборонено (UAC відхилено?)",
+                        8: "Недостатньо пам'яті",
+                        11: "EXE пошкоджено",
+                        26: "Тип файлу невідомий",
+                        27: "Файл не знайдено",
+                        28: "Не вдалося завантажити бібліотеку",
+                        29: "Не вдалося завантажити програму",
+                        30: "Не вдалося прочитати файл",
+                        31: "Не пов'язано з програмою",
+                        32: "DLL не знайдено",
+                    }
+                    msg = err_msgs.get(ret, f"Код помилки {ret}")
+                    raise Exception(f"Не вдалося запустити гру: {msg}")
+                # ret > 32 means success — UAC prompt was shown if needed
+                self.set_status("🎮 Гра запущена! (підтвердіть UAC якщо з'явиться)", 100)
+            except Exception as e:
+                if "UAC" in str(e) or "elevation" in str(e).lower():
+                    raise Exception(
+                        f"Гра потребує прав адміністратора.\n\n"
+                        f"Натисніть Запустити ще раз і підтвердіть запит UAC.\n"
+                        f"Або запустіть лаунчер від імені адміністратора."
+                    )
+                raise
         else:
-            raise Exception("Гра потребує прав адміністратора для запуску.")
+            subprocess.Popen(
+                [exe_path, f"IP={SERVER_IP}"],
+                cwd=sys_dir,
+                shell=False
+            )
+            self.set_status("🎮 Гра запущена!", 100)
 
     def delete_game(self):
         game_dir = self.get_full_game_dir()
@@ -829,7 +673,6 @@ class LauncherApp:
         self.root.after(0, lambda: self.speed_text.set(text))
 
     def set_buttons_state(self, state):
-        self.root.after(0, lambda: self.btn_install.config(state=state))
         self.root.after(0, lambda: self.btn_verify.config(state=state))
         self.root.after(0, lambda: self.btn_launch.config(state=state))
         self.root.after(0, lambda: self.btn_delete.config(state=state))
