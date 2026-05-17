@@ -304,7 +304,17 @@ class LauncherApp:
         if not self.game_path.get():
             messagebox.showerror("Помилка", "Спочатку виберіть директорію!")
             return
-        threading.Thread(target=self.install_game, daemon=True).start()
+        threading.Thread(target=self._safe_thread, args=(self.install_game,), daemon=True).start()
+
+    def _safe_thread(self, target_func):
+        """Wrapper to catch all exceptions and prevent Windows error dialogs."""
+        try:
+            target_func()
+        except Exception as e:
+            self.root.after(0, lambda: messagebox.showerror("Помилка", str(e)))
+            self.root.after(0, lambda: self.set_status(f"❌ Помилка: {e}", 0))
+            self.root.after(0, lambda: self.set_buttons_state("normal"))
+            self.is_installing = False
 
     def install_game(self):
         self.is_installing = True
@@ -364,6 +374,15 @@ class LauncherApp:
         """Download file using already URL-encoded URL from manifest."""
         headers = {"User-Agent": "L2JPlayFun-Launcher"}
         temp_path = local_path + ".tmp"
+        
+        # Ensure directory exists before download
+        dir_name = os.path.dirname(local_path)
+        if dir_name and not os.path.exists(dir_name):
+            try:
+                os.makedirs(dir_name, exist_ok=True)
+            except Exception as e:
+                raise Exception(f"Cannot create directory '{dir_name}': {e}")
+        
         try:
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=60) as resp:
@@ -375,14 +394,23 @@ class LauncherApp:
                         f.write(chunk)
         except Exception:
             if os.path.exists(temp_path):
-                os.remove(temp_path)
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
             raise
         # Verify MD5
         actual_md5 = self.get_md5(temp_path)
         if actual_md5 != expected_md5:
-            os.remove(temp_path)
-            raise Exception(f"MD5 не співпадає для {os.path.basename(local_path)}")
-        os.replace(temp_path, local_path)
+            try:
+                os.remove(temp_path)
+            except:
+                pass
+            raise Exception(f"MD5 mismatch for {os.path.basename(local_path)}")
+        try:
+            os.replace(temp_path, local_path)
+        except Exception as e:
+            raise Exception(f"Cannot move {temp_path} to {local_path}: {e}")
 
     def get_md5(self, filepath):
         hash_md5 = hashlib.md5()
@@ -400,7 +428,7 @@ class LauncherApp:
         if not self.game_path.get() or not os.path.exists(self.game_path.get()):
             messagebox.showerror("Помилка", "Гра не встановлена!")
             return
-        threading.Thread(target=self.verify_game, daemon=True).start()
+        threading.Thread(target=self._safe_thread, args=(self.verify_game,), daemon=True).start()
 
     def verify_game(self):
         self.is_installing = True
