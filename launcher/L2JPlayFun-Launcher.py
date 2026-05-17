@@ -271,20 +271,18 @@ class LauncherApp:
     # ───────────────────────────────────────────────────────────────
 
     def build_ui(self):
-        header = Frame(self.root, bg="#0a0e1a", height=160)
+        header = Frame(self.root, bg="#0a0e1a", height=260)
         header.pack(fill="x")
         header.pack_propagate(False)
         try:
             img_path = resource_path("logo_128.png")
             if os.path.exists(img_path):
                 self.logo_img = PhotoImage(file=img_path)
-                Label(header, image=self.logo_img, bg="#0a0e1a").pack(pady=(10, 0))
+                # Scale up the logo (128 -> 256)
+                self.logo_img = self.logo_img.zoom(2, 2)
+                Label(header, image=self.logo_img, bg="#0a0e1a").pack(expand=True, pady=5)
         except Exception:
             pass
-        Label(header, text="L2J PLAY FUN", font=("Orbitron", 24, "bold"),
-              bg="#0a0e1a", fg="#d4af37").pack(pady=(5, 0))
-        Label(header, text="EPIC CHRONICLES — HIGH FIVE", font=("Segoe UI", 9),
-              bg="#0a0e1a", fg="#4a90d9").pack()
         self.status_widget = ServerStatus(self.root, self.root)
         content = Frame(self.root, bg="#0a0e1a")
         content.pack(fill="both", expand=True, padx=30, pady=10)
@@ -364,7 +362,7 @@ class LauncherApp:
         self.btn_delete.pack(side="left", padx=5)
         footer = Frame(self.root, bg="#0a0e1a")
         footer.pack(fill="x", pady=(0, 10))
-        Label(footer, text="L2J Play Fun Launcher v11.0 | github.com/AriesT/l2j-playfun-launcher",
+        Label(footer, text="L2J Play Fun Launcher v12.0 | github.com/AriesT/l2j-playfun-launcher",
               font=("Segoe UI", 8), bg="#0a0e1a", fg="#444").pack()
 
     def save_server_settings(self):
