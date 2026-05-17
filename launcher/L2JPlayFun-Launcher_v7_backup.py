@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-L2J Play Fun Launcher v8
+L2J Play Fun Launcher v7
 ========================
 Windows launcher for Lineage II server.
-- Parallel downloads (8 threads)
-- Download speed display
-- Orphaned file cleanup on verify
-- Suppressed Windows error dialogs
 """
 
 import os
@@ -15,8 +11,6 @@ import sys
 import json
 import hashlib
 import threading
-import time
-import concurrent.futures
 import urllib.request
 import urllib.error
 from tkinter import (
@@ -33,8 +27,6 @@ DEFAULT_PORT = "8080"
 GAME_DIR_NAME = "Lineage2PlayFun"
 EXE_NAME = "l2.exe"
 VERSION_FILE = "version.txt"
-DOWNLOAD_WORKERS = 8
-CHUNK_SIZE = 262144  # 256 KB
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
@@ -123,7 +115,7 @@ class LauncherApp:
     def __init__(self, root):
         self.root = root
         self.root.title("L2J Play Fun — Launcher")
-        self.root.geometry("720x700")
+        self.root.geometry("720x680")
         self.root.configure(bg="#0a0e1a")
         self.root.resizable(False, False)
         try:
@@ -133,7 +125,6 @@ class LauncherApp:
         self.game_path = StringVar()
         self.status_text = StringVar(value="Виберіть директорію та натисніть Встановити")
         self.progress = IntVar(value=0)
-        self.speed_text = StringVar(value="")
         self.local_version = StringVar(value="Немає")
         self.remote_version = StringVar(value="—")
         self.is_installing = False
@@ -227,10 +218,6 @@ class LauncherApp:
         self.progress_bar = ttk.Progressbar(content, variable=self.progress,
                                            maximum=100, length=500, mode="determinate")
         self.progress_bar.pack(fill="x", pady=10)
-        self.speed_label = Label(content, textvariable=self.speed_text,
-                                 font=("Segoe UI", 9, "bold"),
-                                 bg="#0a0e1a", fg="#4a90d9")
-        self.speed_label.pack()
         Label(content, textvariable=self.status_text, font=("Segoe UI", 9),
               bg="#0a0e1a", fg="#aaa", wraplength=500).pack()
         btn_frame = Frame(content, bg="#0a0e1a")
@@ -248,7 +235,7 @@ class LauncherApp:
                                  activebackground="#0d47a1", **action_style)
         self.btn_verify.pack(side="left", padx=5)
         self.btn_launch = Button(btn_frame, text="▶ Запустити",
-                                 command=self.start_launch,
+                                 command=self.launch_game,
                                  bg="#d4af37", fg="#0a0e1a",
                                  activebackground="#f0d878", **action_style)
         self.btn_launch.pack(side="left", padx=5)
@@ -259,7 +246,7 @@ class LauncherApp:
         self.btn_delete.pack(side="left", padx=5)
         footer = Frame(self.root, bg="#0a0e1a")
         footer.pack(fill="x", pady=(0, 10))
-        Label(footer, text="L2J Play Fun Launcher v8.0 | github.com/AriesT/l2j-playfun-launcher",
+        Label(footer, text="L2J Play Fun Launcher v7.0 | github.com/AriesT/l2j-playfun-launcher",
               font=("Segoe UI", 8), bg="#0a0e1a", fg="#444").pack()
 
     def save_server_settings(self):
@@ -319,17 +306,6 @@ class LauncherApp:
             return
         threading.Thread(target=self._safe_thread, args=(self.install_game,), daemon=True).start()
 
-    def start_verify(self):
-        if self.is_installing:
-            return
-        if not self.game_path.get() or not os.path.exists(self.game_path.get()):
-            messagebox.showerror("Помилка", "Гра не встановлена!")
-            return
-        threading.Thread(target=self._safe_thread, args=(self.verify_game,), daemon=True).start()
-
-    def start_launch(self):
-        threading.Thread(target=self._safe_thread, args=(self.launch_game,), daemon=True).start()
-
     def _safe_thread(self, target_func):
         """Wrapper to catch all exceptions and prevent Windows error dialogs."""
         try:
@@ -343,13 +319,10 @@ class LauncherApp:
     def install_game(self):
         self.is_installing = True
         self.set_buttons_state("disabled")
-        self.download_stats = None
-        self.stop_ui_update = threading.Event()
         try:
             game_dir = self.get_full_game_dir()
             os.makedirs(game_dir, exist_ok=True)
             self.set_status("Отримання списку файлів...", 5)
-            self.set_speed_text("")
             req = urllib.request.Request(
                 f"{API_URL}?action=manifest",
                 headers={"User-Agent": "L2JPlayFun-Launcher"}
@@ -363,80 +336,31 @@ class LauncherApp:
                 raise Exception("Файли гри не знайдені на сервері")
             total = len(files)
             remote_version = data.get("version", "1.0.0")
-
-            # Determine which files actually need downloading
-            files_to_download = []
-            self.set_status(f"Аналіз {total} файлів...", 8)
-            for f_info in files:
+            self.set_status(f"Завантаження {total} файлів...", 10)
+            for i, f_info in enumerate(files):
                 rel_path = f_info["path"]
+                file_url = f_info["url"]  # Already URL-encoded from server
                 expected_md5 = f_info["md5"]
-                local_file = os.path.join(game_dir, rel_path.replace("/", os.sep))
+                rel_path_fixed = rel_path.replace("/", os.sep)
+                local_file = os.path.join(game_dir, rel_path_fixed)
+                os.makedirs(os.path.dirname(local_file), exist_ok=True)
                 if os.path.exists(local_file):
                     local_md5 = self.get_md5(local_file)
                     if local_md5 and local_md5 == expected_md5:
+                        self.set_status(f"[{i+1}/{total}] {rel_path} — актуальний", 
+                                       10 + int((i / total) * 85))
                         continue
-                files_to_download.append(f_info)
-
-            if not files_to_download:
-                with open(os.path.join(game_dir, VERSION_FILE), "w") as vf:
-                    vf.write(remote_version)
-                self.local_version.set(remote_version)
-                self.set_status("✅ Всі файли актуальні!", 100)
-                messagebox.showinfo("Готово", "Всі файли вже актуальні.")
-                return
-
-            # Shared stats for UI updates
-            self.download_stats = {
-                "processed": 0,
-                "total": len(files_to_download),
-                "start_time": time.time(),
-                "total_bytes": 0,
-                "lock": threading.Lock(),
-                "errors": [],
-                "cancelled": False,
-            }
-
-            def download_worker(f_info):
-                if self.download_stats["cancelled"]:
-                    return
-                rel_path = f_info["path"]
-                file_url = f_info["url"]
-                expected_md5 = f_info["md5"]
-                local_file = os.path.join(game_dir, rel_path.replace("/", os.sep))
-                try:
-                    bytes_dl = self.download_file_with_size(file_url, local_file, expected_md5)
-                    with self.download_stats["lock"]:
-                        self.download_stats["processed"] += 1
-                        self.download_stats["total_bytes"] += bytes_dl
-                except Exception as e:
-                    with self.download_stats["lock"]:
-                        self.download_stats["errors"].append(f"{rel_path}: {e}")
-                        self.download_stats["cancelled"] = True
-
-            # Start UI update background thread
-            ui_thread = threading.Thread(target=self._ui_update_loop, daemon=True)
-            ui_thread.start()
-
-            max_workers = min(DOWNLOAD_WORKERS, len(files_to_download))
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(download_worker, f) for f in files_to_download]
-                concurrent.futures.wait(futures)
-
-            self.stop_ui_update.set()
-
-            if self.download_stats["errors"]:
-                err_msg = "\n".join(self.download_stats["errors"][:5])
-                raise Exception(f"Помилки завантаження:\n{err_msg}")
-
+                self.set_status(f"[{i+1}/{total}] {rel_path}",
+                               10 + int((i / total) * 85))
+                self.download_file(file_url, local_file, expected_md5)
             with open(os.path.join(game_dir, VERSION_FILE), "w") as vf:
                 vf.write(remote_version)
             self.local_version.set(remote_version)
             self.set_status("✅ Встановлення завершено!", 100)
-            self.set_speed_text("")
             messagebox.showinfo("Готово", "Гру успішно встановлено!")
         except urllib.error.HTTPError as e:
             self.set_status(f"❌ HTTP помилка {e.code}: сервер недоступний", 0)
-            messagebox.showerror("Помилка сервера",
+            messagebox.showerror("Помилка сервера", 
                 f"Не вдалося підключитися до сервера ({SERVER_URL}).\n\n"
                 f"Переконайтеся, що у вас є інтернет-з'єднання.")
         except Exception as e:
@@ -445,55 +369,48 @@ class LauncherApp:
         finally:
             self.is_installing = False
             self.set_buttons_state("normal")
-            self.stop_ui_update.set()
 
-    def _ui_update_loop(self):
-        """Background thread updating speed and progress every 500ms."""
-        while not self.stop_ui_update.is_set():
-            if self.download_stats is None:
-                time.sleep(0.5)
-                continue
-            with self.download_stats["lock"]:
-                processed = self.download_stats["processed"]
-                total = self.download_stats["total"]
-                total_bytes = self.download_stats["total_bytes"]
-                elapsed = time.time() - self.download_stats["start_time"]
-            if elapsed > 0 and total > 0:
-                speed_mbps = (total_bytes / (1024 * 1024)) / elapsed
-                progress = 10 + int((processed / total) * 85)
-                self.set_speed_text(f"⚡ {speed_mbps:.2f} MB/s")
-                self.set_status(f"Завантаження... {processed}/{total} файлів", progress)
-            time.sleep(0.5)
-
-    def download_file_with_size(self, url, local_path, expected_md5):
-        """Download file and return number of bytes downloaded."""
+    def download_file(self, url, local_path, expected_md5):
+        """Download file using already URL-encoded URL from manifest."""
         headers = {"User-Agent": "L2JPlayFun-Launcher"}
         temp_path = local_path + ".tmp"
+        
+        # Ensure directory exists before download
         dir_name = os.path.dirname(local_path)
-        if dir_name:
-            os.makedirs(dir_name, exist_ok=True)
-        req = urllib.request.Request(url, headers=headers)
-        bytes_downloaded = 0
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            with open(temp_path, "wb") as f:
-                while True:
-                    chunk = resp.read(CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    bytes_downloaded += len(chunk)
+        if dir_name and not os.path.exists(dir_name):
+            try:
+                os.makedirs(dir_name, exist_ok=True)
+            except Exception as e:
+                raise Exception(f"Cannot create directory '{dir_name}': {e}")
+        
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                with open(temp_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+        except Exception:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+            raise
+        # Verify MD5
         actual_md5 = self.get_md5(temp_path)
         if actual_md5 != expected_md5:
             try:
                 os.remove(temp_path)
-            except Exception:
+            except:
                 pass
             raise Exception(f"MD5 mismatch for {os.path.basename(local_path)}")
         try:
             os.replace(temp_path, local_path)
         except Exception as e:
             raise Exception(f"Cannot move {temp_path} to {local_path}: {e}")
-        return bytes_downloaded
 
     def get_md5(self, filepath):
         hash_md5 = hashlib.md5()
@@ -504,6 +421,14 @@ class LauncherApp:
         except Exception:
             return None
         return hash_md5.hexdigest()
+
+    def start_verify(self):
+        if self.is_installing:
+            return
+        if not self.game_path.get() or not os.path.exists(self.game_path.get()):
+            messagebox.showerror("Помилка", "Гра не встановлена!")
+            return
+        threading.Thread(target=self._safe_thread, args=(self.verify_game,), daemon=True).start()
 
     def verify_game(self):
         self.is_installing = True
@@ -519,26 +444,6 @@ class LauncherApp:
                 data = json.loads(resp.read().decode("utf-8"))
             files = data.get("files", [])
             total = len(files)
-
-            # Build normalized manifest path set for orphaned detection
-            manifest_paths = set()
-            for f_info in files:
-                rel_path = f_info["path"].replace("/", os.sep).lower()
-                manifest_paths.add(rel_path)
-
-            # Find orphaned files (not in manifest and not version file)
-            orphaned_files = []
-            for root, dirs, files_walk in os.walk(game_dir):
-                # Skip hidden/system directories
-                dirs[:] = [d for d in dirs if not d.startswith(".")]
-                for filename in files_walk:
-                    if filename.lower() == VERSION_FILE.lower():
-                        continue
-                    full_path = os.path.join(root, filename)
-                    rel_path = os.path.relpath(full_path, game_dir).lower()
-                    if rel_path not in manifest_paths:
-                        orphaned_files.append(full_path)
-
             missing = 0
             corrupted = 0
             for i, f_info in enumerate(files):
@@ -549,38 +454,15 @@ class LauncherApp:
                                int((i / total) * 100))
                 if not os.path.exists(local_file):
                     missing += 1
-                    self.download_file_with_size(f_info["url"], local_file, expected_md5)
+                    self.download_file(f_info["url"], local_file, expected_md5)
                 elif self.get_md5(local_file) != expected_md5:
                     corrupted += 1
-                    self.download_file_with_size(f_info["url"], local_file, expected_md5)
-
-            # Delete orphaned files
-            deleted_orphaned = 0
-            if orphaned_files:
-                for op in orphaned_files:
-                    try:
-                        os.remove(op)
-                        deleted_orphaned += 1
-                    except Exception:
-                        pass
-                # Remove empty directories
-                for root, dirs, files_walk in os.walk(game_dir, topdown=False):
-                    for d in dirs:
-                        dir_path = os.path.join(root, d)
-                        if not os.listdir(dir_path):
-                            try:
-                                os.rmdir(dir_path)
-                            except Exception:
-                                pass
-
+                    self.download_file(f_info["url"], local_file, expected_md5)
             msg = f"Перевірку завершено!"
-            if missing == 0 and corrupted == 0 and deleted_orphaned == 0:
+            if missing == 0 and corrupted == 0:
                 msg += "\nВсі файли цілі ✅"
             else:
-                msg += f"\nВідсутніх: {missing}"
-                msg += f"\nПошкоджених: {corrupted}"
-                msg += f"\nЗайвих видалено: {deleted_orphaned}"
-                msg += "\nВідновлено ✅"
+                msg += f"\nВідсутніх: {missing}\nПошкоджених: {corrupted}\nВідновлено ✅"
             self.set_status(msg.replace("\n", " | "), 100)
             messagebox.showinfo("Готово", msg)
         except urllib.error.HTTPError as e:
@@ -595,24 +477,21 @@ class LauncherApp:
 
     def launch_game(self):
         game_dir = self.get_full_game_dir()
-        if not game_dir:
-            raise Exception("Гра не встановлена! Спочатку встановіть її.")
-        if not os.path.exists(game_dir):
-            raise Exception(f"Директорія гри не знайдена:\n{game_dir}")
-        sys_dir = os.path.join(game_dir, "system")
-        exe_path = os.path.join(sys_dir, EXE_NAME)
+        exe_path = os.path.join(game_dir, "system", EXE_NAME)
         if not os.path.exists(exe_path):
-            raise Exception(f"Файл гри не знайдено:\n{exe_path}\n\nСпочатку встановіть гру.")
+            messagebox.showerror("Помилка", "Гра не знайдена! Спочатку встановіть її.")
+            return
         try:
+            sys_dir = os.path.join(game_dir, "system")
             subprocess.Popen(
-                [exe_path, f"IP={SERVER_IP}"],
+                [EXE_NAME, "IP=188.40.83.149"],
                 cwd=sys_dir,
                 shell=False,
                 creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
             )
             self.set_status("🎮 Гра запущена!", 100)
         except Exception as e:
-            raise Exception(f"Не вдалося запустити гру: {e}")
+            messagebox.showerror("Помилка запуску", str(e))
 
     def delete_game(self):
         game_dir = self.get_full_game_dir()
@@ -638,9 +517,6 @@ class LauncherApp:
         self.root.after(0, lambda: self.status_text.set(text))
         self.root.after(0, lambda: self.progress.set(progress_val))
 
-    def set_speed_text(self, text):
-        self.root.after(0, lambda: self.speed_text.set(text))
-
     def set_buttons_state(self, state):
         self.root.after(0, lambda: self.btn_install.config(state=state))
         self.root.after(0, lambda: self.btn_verify.config(state=state))
@@ -649,15 +525,6 @@ class LauncherApp:
 
 
 def main():
-    if os.name == 'nt':
-        import ctypes
-        # Suppress Windows error dialogs for this process and child processes
-        SEM_FAILCRITICALERRORS = 0x0001
-        SEM_NOGPFAULTERRORBOX = 0x0002
-        SEM_NOOPENFILEERRORBOX = 0x8000
-        ctypes.windll.kernel32.SetErrorMode(
-            SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX
-        )
     root = Tk()
     style = ttk.Style()
     style.theme_use("clam")
