@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-L2J Play Fun Launcher v4
+L2J Play Fun Launcher v7
 ========================
 Windows launcher for Lineage II server.
 """
@@ -115,7 +115,7 @@ class LauncherApp:
     def __init__(self, root):
         self.root = root
         self.root.title("L2J Play Fun — Launcher")
-        self.root.geometry("720x640")
+        self.root.geometry("720x680")
         self.root.configure(bg="#0a0e1a")
         self.root.resizable(False, False)
         try:
@@ -173,7 +173,6 @@ class LauncherApp:
         dir_frame.pack(fill="x", pady=5)
         Label(dir_frame, text="Директорія:", font=("Segoe UI", 10),
               bg="#0a0e1a", fg="#ccc").pack(side="left")
-        # Use normal Entry but prevent editing via binding
         self.path_entry = Entry(dir_frame, textvariable=self.game_path, font=("Segoe UI", 9),
                                 bg="#1a2332", fg="#fff", insertbackground="#fff",
                                 relief="flat", width=42, state="readonly",
@@ -247,7 +246,7 @@ class LauncherApp:
         self.btn_delete.pack(side="left", padx=5)
         footer = Frame(self.root, bg="#0a0e1a")
         footer.pack(fill="x", pady=(0, 10))
-        Label(footer, text="L2J Play Fun Launcher v4.0 | github.com/AriesT/l2j-playfun-launcher",
+        Label(footer, text="L2J Play Fun Launcher v7.0 | github.com/AriesT/l2j-playfun-launcher",
               font=("Segoe UI", 8), bg="#0a0e1a", fg="#444").pack()
 
     def save_server_settings(self):
@@ -330,7 +329,7 @@ class LauncherApp:
             self.set_status(f"Завантаження {total} файлів...", 10)
             for i, f_info in enumerate(files):
                 rel_path = f_info["path"]
-                file_url = f_info["url"]
+                file_url = f_info["url"]  # Already URL-encoded from server
                 expected_md5 = f_info["md5"]
                 rel_path_fixed = rel_path.replace("/", os.sep)
                 local_file = os.path.join(game_dir, rel_path_fixed)
@@ -362,23 +361,23 @@ class LauncherApp:
             self.set_buttons_state("normal")
 
     def download_file(self, url, local_path, expected_md5):
+        """Download file using already URL-encoded URL from manifest."""
         headers = {"User-Agent": "L2JPlayFun-Launcher"}
         temp_path = local_path + ".tmp"
-        start_pos = 0
-        if os.path.exists(temp_path):
-            start_pos = os.path.getsize(temp_path)
         try:
             req = urllib.request.Request(url, headers=headers)
             with urllib.request.urlopen(req, timeout=60) as resp:
-                mode = "wb"
-                with open(temp_path, mode) as f:
+                with open(temp_path, "wb") as f:
                     while True:
                         chunk = resp.read(65536)
                         if not chunk:
                             break
                         f.write(chunk)
         except Exception:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
             raise
+        # Verify MD5
         actual_md5 = self.get_md5(temp_path)
         if actual_md5 != expected_md5:
             os.remove(temp_path)
