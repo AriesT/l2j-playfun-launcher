@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-L2J Play Fun Launcher v8
+L2J Play Fun Launcher v9
 ========================
 Windows launcher for Lineage II server.
 - Parallel downloads (8 threads)
 - Download speed display
 - Orphaned file cleanup on verify
-- Suppressed Windows error dialogs
+- Custom alert dialogs (no Windows messagebox)
+- Handles UAC elevation for game launch
 """
 
 import os
@@ -21,7 +22,7 @@ import urllib.request
 import urllib.error
 from tkinter import (
     Tk, Frame, Label, Button, Entry, StringVar, IntVar,
-    filedialog, messagebox, ttk, PhotoImage
+    filedialog, ttk, PhotoImage, Toplevel
 )
 import subprocess
 import shutil
@@ -71,6 +72,18 @@ def resource_path(relative_path):
     except Exception:
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
+
+
+def suppress_windows_error_dialogs():
+    """Prevent Windows from showing system error dialogs."""
+    if os.name == 'nt':
+        import ctypes
+        SEM_FAILCRITICALERRORS = 0x0001
+        SEM_NOGPFAULTERRORBOX = 0x0002
+        SEM_NOOPENFILEERRORBOX = 0x8000
+        ctypes.windll.kernel32.SetErrorMode(
+            SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX
+        )
 
 
 class ServerStatus:
@@ -159,6 +172,101 @@ class LauncherApp:
                 f.write(self.game_path.get())
         except Exception:
             pass
+
+    # ─── CUSTOM ALERTS (no Windows messagebox) ─────────────────────
+    def show_alert(self, title, message, msg_type="info"):
+        """Show a custom styled alert dialog inside the launcher (no Windows messagebox)."""
+        def _create():
+            win = Toplevel(self.root)
+            win.title(title)
+            win.configure(bg="#0a0e1a")
+            win.geometry("450x200")
+            win.resizable(False, False)
+            win.transient(self.root)
+            win.grab_set()
+            win.focus_force()
+
+            # Icon color based on type
+            icon_color = "#4caf50" if msg_type == "info" else "#d4af37" if msg_type == "warning" else "#f44336"
+            icon_text = "✓" if msg_type == "info" else "⚠" if msg_type == "warning" else "✗"
+
+            Label(win, text=icon_text, font=("Segoe UI", 32), bg="#0a0e1a", fg=icon_color).pack(pady=(15, 5))
+            Label(win, text=title, font=("Segoe UI", 12, "bold"), bg="#0a0e1a", fg="#fff").pack()
+            Label(win, text=message, font=("Segoe UI", 10), bg="#0a0e1a", fg="#ccc",
+                  wraplength=400, justify="center").pack(pady=10, padx=20)
+
+            btn_color = "#1a2a4a"
+            btn_fg = "#4a90d9"
+            btn_hover = "#2a3a5a"
+            btn = Button(win, text="OK", font=("Segoe UI", 10, "bold"),
+                         bg=btn_color, fg=btn_fg, activebackground=btn_hover, activeforeground="#fff",
+                         relief="flat", padx=30, pady=5, cursor="hand2",
+                         command=win.destroy)
+            btn.pack(pady=10)
+
+            win.protocol("WM_DELETE_WINDOW", win.destroy)
+            win.bind("<Return>", lambda e: win.destroy())
+            win.bind("<Escape>", lambda e: win.destroy())
+
+            # Center the window
+            win.update_idletasks()
+            x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (win.winfo_width() // 2)
+            y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (win.winfo_height() // 2)
+            win.geometry(f"+{x}+{y}")
+
+        self.root.after(0, _create)
+
+    def show_yesno(self, title, message, on_yes, on_no=None):
+        """Show a custom yes/no dialog inside the launcher."""
+        def _create():
+            win = Toplevel(self.root)
+            win.title(title)
+            win.configure(bg="#0a0e1a")
+            win.geometry("450x200")
+            win.resizable(False, False)
+            win.transient(self.root)
+            win.grab_set()
+            win.focus_force()
+
+            Label(win, text="⚠", font=("Segoe UI", 32), bg="#0a0e1a", fg="#d4af37").pack(pady=(15, 5))
+            Label(win, text=title, font=("Segoe UI", 12, "bold"), bg="#0a0e1a", fg="#fff").pack()
+            Label(win, text=message, font=("Segoe UI", 10), bg="#0a0e1a", fg="#ccc",
+                  wraplength=400, justify="center").pack(pady=10, padx=20)
+
+            btn_frame = Frame(win, bg="#0a0e1a")
+            btn_frame.pack(pady=10)
+
+            def _yes():
+                win.destroy()
+                if on_yes:
+                    on_yes()
+
+            def _no():
+                win.destroy()
+                if on_no:
+                    on_no()
+
+            Button(btn_frame, text="Так", font=("Segoe UI", 10, "bold"),
+                   bg="#c62828", fg="#fff", activebackground="#8e0000",
+                   relief="flat", padx=25, pady=5, cursor="hand2",
+                   command=_yes).pack(side="left", padx=10)
+            Button(btn_frame, text="Ні", font=("Segoe UI", 10, "bold"),
+                   bg="#1a2a4a", fg="#4a90d9", activebackground="#2a3a5a",
+                   relief="flat", padx=25, pady=5, cursor="hand2",
+                   command=_no).pack(side="left", padx=10)
+
+            win.protocol("WM_DELETE_WINDOW", _no)
+            win.bind("<Return>", lambda e: _yes())
+            win.bind("<Escape>", lambda e: _no())
+
+            win.update_idletasks()
+            x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (win.winfo_width() // 2)
+            y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (win.winfo_height() // 2)
+            win.geometry(f"+{x}+{y}")
+
+        self.root.after(0, _create)
+
+    # ───────────────────────────────────────────────────────────────
 
     def build_ui(self):
         header = Frame(self.root, bg="#0a0e1a", height=160)
@@ -259,20 +367,20 @@ class LauncherApp:
         self.btn_delete.pack(side="left", padx=5)
         footer = Frame(self.root, bg="#0a0e1a")
         footer.pack(fill="x", pady=(0, 10))
-        Label(footer, text="L2J Play Fun Launcher v8.0 | github.com/AriesT/l2j-playfun-launcher",
+        Label(footer, text="L2J Play Fun Launcher v9.0 | github.com/AriesT/l2j-playfun-launcher",
               font=("Segoe UI", 8), bg="#0a0e1a", fg="#444").pack()
 
     def save_server_settings(self):
         ip = self.ip_entry.get().strip()
         port = self.port_entry.get().strip()
         if not ip or not port.isdigit():
-            messagebox.showerror("Помилка", "Введіть коректний IP та порт")
+            self.show_alert("Помилка", "Введіть коректний IP та порт", "error")
             return
         save_config(ip, port)
-        messagebox.showinfo("Збережено",
+        self.show_alert("Збережено",
             f"Налаштування сервера оновлено!\n\n"
             f"Адреса: {ip}:{port}\n"
-            f"Перезапустіть лаунчер для застосування.")
+            f"Перезапустіть лаунчер для застосування.", "info")
 
     def select_dir(self):
         path = filedialog.askdirectory(title="Виберіть директорію для гри")
@@ -315,7 +423,7 @@ class LauncherApp:
         if self.is_installing:
             return
         if not self.game_path.get():
-            messagebox.showerror("Помилка", "Спочатку виберіть директорію!")
+            self.show_alert("Помилка", "Спочатку виберіть директорію!", "error")
             return
         threading.Thread(target=self._safe_thread, args=(self.install_game,), daemon=True).start()
 
@@ -323,7 +431,7 @@ class LauncherApp:
         if self.is_installing:
             return
         if not self.game_path.get() or not os.path.exists(self.game_path.get()):
-            messagebox.showerror("Помилка", "Гра не встановлена!")
+            self.show_alert("Помилка", "Гра не встановлена!", "error")
             return
         threading.Thread(target=self._safe_thread, args=(self.verify_game,), daemon=True).start()
 
@@ -331,11 +439,11 @@ class LauncherApp:
         threading.Thread(target=self._safe_thread, args=(self.launch_game,), daemon=True).start()
 
     def _safe_thread(self, target_func):
-        """Wrapper to catch all exceptions and prevent Windows error dialogs."""
+        """Wrapper to catch all exceptions and show in launcher (no Windows dialog)."""
         try:
             target_func()
         except Exception as e:
-            self.root.after(0, lambda: messagebox.showerror("Помилка", str(e)))
+            self.root.after(0, lambda: self.show_alert("Помилка", str(e), "error"))
             self.root.after(0, lambda: self.set_status(f"❌ Помилка: {e}", 0))
             self.root.after(0, lambda: self.set_buttons_state("normal"))
             self.is_installing = False
@@ -378,11 +486,10 @@ class LauncherApp:
                 files_to_download.append(f_info)
 
             if not files_to_download:
-                with open(os.path.join(game_dir, VERSION_FILE), "w") as vf:
-                    vf.write(remote_version)
-                self.local_version.set(remote_version)
+                self._write_version(game_dir, remote_version)
                 self.set_status("✅ Всі файли актуальні!", 100)
-                messagebox.showinfo("Готово", "Всі файли вже актуальні.")
+                self.set_speed_text("")
+                self.show_alert("Готово", "Всі файли вже актуальні.", "info")
                 return
 
             # Shared stats for UI updates
@@ -428,24 +535,31 @@ class LauncherApp:
                 err_msg = "\n".join(self.download_stats["errors"][:5])
                 raise Exception(f"Помилки завантаження:\n{err_msg}")
 
-            with open(os.path.join(game_dir, VERSION_FILE), "w") as vf:
-                vf.write(remote_version)
-            self.local_version.set(remote_version)
+            self._write_version(game_dir, remote_version)
             self.set_status("✅ Встановлення завершено!", 100)
             self.set_speed_text("")
-            messagebox.showinfo("Готово", "Гру успішно встановлено!")
+            self.show_alert("Готово", "Гру успішно встановлено!", "info")
         except urllib.error.HTTPError as e:
             self.set_status(f"❌ HTTP помилка {e.code}: сервер недоступний", 0)
-            messagebox.showerror("Помилка сервера",
+            self.show_alert("Помилка сервера",
                 f"Не вдалося підключитися до сервера ({SERVER_URL}).\n\n"
-                f"Переконайтеся, що у вас є інтернет-з'єднання.")
+                f"Переконайтеся, що у вас є інтернет-з'єднання.", "error")
         except Exception as e:
             self.set_status(f"❌ Помилка: {e}", 0)
-            messagebox.showerror("Помилка", str(e))
+            self.show_alert("Помилка", str(e), "error")
         finally:
             self.is_installing = False
             self.set_buttons_state("normal")
             self.stop_ui_update.set()
+
+    def _write_version(self, game_dir, version):
+        """Write version.txt and update UI."""
+        try:
+            with open(os.path.join(game_dir, VERSION_FILE), "w") as vf:
+                vf.write(version)
+            self.root.after(0, lambda: self.local_version.set(version))
+        except Exception as e:
+            raise Exception(f"Не вдалося зберегти версію: {e}")
 
     def _ui_update_loop(self):
         """Background thread updating speed and progress every 500ms."""
@@ -519,6 +633,7 @@ class LauncherApp:
                 data = json.loads(resp.read().decode("utf-8"))
             files = data.get("files", [])
             total = len(files)
+            remote_version = data.get("version", "1.0.0")
 
             # Build normalized manifest path set for orphaned detection
             manifest_paths = set()
@@ -528,13 +643,13 @@ class LauncherApp:
 
             # Find orphaned files (not in manifest and not version file)
             orphaned_files = []
-            for root, dirs, files_walk in os.walk(game_dir):
+            for root_walk, dirs, files_walk in os.walk(game_dir):
                 # Skip hidden/system directories
                 dirs[:] = [d for d in dirs if not d.startswith(".")]
                 for filename in files_walk:
                     if filename.lower() == VERSION_FILE.lower():
                         continue
-                    full_path = os.path.join(root, filename)
+                    full_path = os.path.join(root_walk, filename)
                     rel_path = os.path.relpath(full_path, game_dir).lower()
                     if rel_path not in manifest_paths:
                         orphaned_files.append(full_path)
@@ -564,14 +679,17 @@ class LauncherApp:
                     except Exception:
                         pass
                 # Remove empty directories
-                for root, dirs, files_walk in os.walk(game_dir, topdown=False):
+                for root_walk, dirs, files_walk in os.walk(game_dir, topdown=False):
                     for d in dirs:
-                        dir_path = os.path.join(root, d)
+                        dir_path = os.path.join(root_walk, d)
                         if not os.listdir(dir_path):
                             try:
                                 os.rmdir(dir_path)
                             except Exception:
                                 pass
+
+            # Update version after successful verify
+            self._write_version(game_dir, remote_version)
 
             msg = f"Перевірку завершено!"
             if missing == 0 and corrupted == 0 and deleted_orphaned == 0:
@@ -582,13 +700,13 @@ class LauncherApp:
                 msg += f"\nЗайвих видалено: {deleted_orphaned}"
                 msg += "\nВідновлено ✅"
             self.set_status(msg.replace("\n", " | "), 100)
-            messagebox.showinfo("Готово", msg)
+            self.show_alert("Готово", msg, "info")
         except urllib.error.HTTPError as e:
             self.set_status(f"❌ HTTP помилка {e.code}", 0)
-            messagebox.showerror("Помилка", f"Сервер недоступний ({SERVER_URL})")
+            self.show_alert("Помилка", f"Сервер недоступний ({SERVER_URL})", "error")
         except Exception as e:
             self.set_status(f"❌ Помилка: {e}", 0)
-            messagebox.showerror("Помилка", str(e))
+            self.show_alert("Помилка", str(e), "error")
         finally:
             self.is_installing = False
             self.set_buttons_state("normal")
@@ -603,36 +721,76 @@ class LauncherApp:
         exe_path = os.path.join(sys_dir, EXE_NAME)
         if not os.path.exists(exe_path):
             raise Exception(f"Файл гри не знайдено:\n{exe_path}\n\nСпочатку встановіть гру.")
+
+        # Try launching the game
         try:
-            subprocess.Popen(
-                [exe_path, f"IP={SERVER_IP}"],
-                cwd=sys_dir,
-                shell=False,
-                creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
-            )
+            if os.name == 'nt':
+                subprocess.Popen(
+                    [exe_path, f"IP={SERVER_IP}"],
+                    cwd=sys_dir,
+                    shell=False,
+                    creationflags=0
+                )
+            else:
+                subprocess.Popen(
+                    [exe_path, f"IP={SERVER_IP}"],
+                    cwd=sys_dir,
+                    shell=False
+                )
             self.set_status("🎮 Гра запущена!", 100)
+        except OSError as e:
+            error_code = getattr(e, 'winerror', None) or getattr(e, 'errno', 0)
+            if error_code == 740:
+                # Elevation required — try ShellExecuteW
+                self._try_elevated_launch(exe_path, sys_dir)
+            else:
+                raise Exception(f"Не вдалося запустити гру: {e}")
         except Exception as e:
             raise Exception(f"Не вдалося запустити гру: {e}")
+
+    def _try_elevated_launch(self, exe_path, sys_dir):
+        """Try to launch with UAC elevation using ShellExecuteW."""
+        if os.name == 'nt':
+            import ctypes
+            try:
+                ret = ctypes.windll.shell32.ShellExecuteW(
+                    None, "runas", exe_path,
+                    f"IP={SERVER_IP}", sys_dir, 1
+                )
+                if ret <= 32:
+                    raise Exception(f"ShellExecute failed with code {ret}")
+                self.set_status("🎮 Гра запущена з правами адміністратора!", 100)
+            except Exception as e2:
+                raise Exception(
+                    f"Гра потребує прав адміністратора для запуску.\n\n"
+                    f"Варіанти вирішення:\n"
+                    f"1. Натисніть кнопку Запустити ще раз і підтвердіть UAC\n"
+                    f"2. Запустіть лаунчер від імені адміністратора (ПКМ → Запустити від імені адміністратора)\n\n"
+                    f"Помилка: {e2}"
+                )
+        else:
+            raise Exception("Гра потребує прав адміністратора для запуску.")
 
     def delete_game(self):
         game_dir = self.get_full_game_dir()
         if not os.path.exists(game_dir):
-            messagebox.showinfo("Інформація", "Гра не встановлена.")
+            self.show_alert("Інформація", "Гра не встановлена.", "info")
             return
-        result = messagebox.askyesno(
-            "⚠ Підтвердження видалення",
-            f"Ви впевнені, що хочете видалити гру з:\n\n{game_dir}\n\n"
-            "Ця дія незворотна!",
-            icon="warning"
-        )
-        if result:
+        def _do_delete():
             try:
                 shutil.rmtree(game_dir)
                 self.local_version.set("Немає")
                 self.set_status("🗑 Гру видалено", 0)
-                messagebox.showinfo("Готово", "Файли гри успішно видалено.")
+                self.show_alert("Готово", "Файли гри успішно видалено.", "info")
             except Exception as e:
-                messagebox.showerror("Помилка", str(e))
+                self.show_alert("Помилка", str(e), "error")
+
+        self.show_yesno(
+            "⚠ Підтвердження видалення",
+            f"Ви впевнені, що хочете видалити гру з:\n\n{game_dir}\n\n"
+            "Ця дія незворотна!",
+            on_yes=_do_delete
+        )
 
     def set_status(self, text, progress_val):
         self.root.after(0, lambda: self.status_text.set(text))
@@ -649,15 +807,7 @@ class LauncherApp:
 
 
 def main():
-    if os.name == 'nt':
-        import ctypes
-        # Suppress Windows error dialogs for this process and child processes
-        SEM_FAILCRITICALERRORS = 0x0001
-        SEM_NOGPFAULTERRORBOX = 0x0002
-        SEM_NOOPENFILEERRORBOX = 0x8000
-        ctypes.windll.kernel32.SetErrorMode(
-            SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX
-        )
+    suppress_windows_error_dialogs()
     root = Tk()
     style = ttk.Style()
     style.theme_use("clam")
