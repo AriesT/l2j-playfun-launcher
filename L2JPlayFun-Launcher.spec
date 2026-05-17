@@ -8,7 +8,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('launcher/launcher.ico', '.'),
-        ('launcher/logo_128.png', '.'),
+        ('launcher/logo_256.png', '.'),
     ],
     hiddenimports=[],
     hookspath=[],
