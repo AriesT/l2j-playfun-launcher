@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-L2J Play Fun Launcher v9
-========================
+L2J Play Fun Launcher v10
+=========================
 Windows launcher for Lineage II server.
 - Parallel downloads (8 threads)
 - Download speed display
 - Orphaned file cleanup on verify
 - Custom alert dialogs (no Windows messagebox)
 - Handles UAC elevation for game launch
+- No redundant success popups (status bar only)
+- Download progress shown during verify
 """
 
 import os
@@ -171,7 +173,7 @@ class LauncherApp:
             with open(config, "w", encoding="utf-8") as f:
                 f.write(self.game_path.get())
         except Exception:
-            pass
+                pass
 
     # ─── CUSTOM ALERTS (no Windows messagebox) ─────────────────────
     def show_alert(self, title, message, msg_type="info"):
@@ -367,7 +369,7 @@ class LauncherApp:
         self.btn_delete.pack(side="left", padx=5)
         footer = Frame(self.root, bg="#0a0e1a")
         footer.pack(fill="x", pady=(0, 10))
-        Label(footer, text="L2J Play Fun Launcher v9.0 | github.com/AriesT/l2j-playfun-launcher",
+        Label(footer, text="L2J Play Fun Launcher v10.0 | github.com/AriesT/l2j-playfun-launcher",
               font=("Segoe UI", 8), bg="#0a0e1a", fg="#444").pack()
 
     def save_server_settings(self):
@@ -664,14 +666,20 @@ class LauncherApp:
                                int((i / total) * 100))
                 if not os.path.exists(local_file):
                     missing += 1
+                    # Show downloading status for this specific file
+                    self.set_status(f"[{i+1}/{total}] ⬇ Завантаження {rel_path}...",
+                                   int((i / total) * 100))
                     self.download_file_with_size(f_info["url"], local_file, expected_md5)
                 elif self.get_md5(local_file) != expected_md5:
                     corrupted += 1
+                    self.set_status(f"[{i+1}/{total}] ⬇ Завантаження {rel_path}...",
+                                   int((i / total) * 100))
                     self.download_file_with_size(f_info["url"], local_file, expected_md5)
 
             # Delete orphaned files
             deleted_orphaned = 0
             if orphaned_files:
+                self.set_status(f"🗑 Видалення зайвих файлів...", 95)
                 for op in orphaned_files:
                     try:
                         os.remove(op)
@@ -691,16 +699,18 @@ class LauncherApp:
             # Update version after successful verify
             self._write_version(game_dir, remote_version)
 
-            msg = f"Перевірку завершено!"
+            # Build status message — NO popup, just status bar
             if missing == 0 and corrupted == 0 and deleted_orphaned == 0:
-                msg += "\nВсі файли цілі ✅"
+                self.set_status("✅ Всі файли цілі! Перевірку завершено.", 100)
             else:
-                msg += f"\nВідсутніх: {missing}"
-                msg += f"\nПошкоджених: {corrupted}"
-                msg += f"\nЗайвих видалено: {deleted_orphaned}"
-                msg += "\nВідновлено ✅"
-            self.set_status(msg.replace("\n", " | "), 100)
-            self.show_alert("Готово", msg, "info")
+                parts = ["✅ Перевірку завершено!"]
+                if missing > 0:
+                    parts.append(f"Відсутніх завантажено: {missing}")
+                if corrupted > 0:
+                    parts.append(f"Пошкоджених відновлено: {corrupted}")
+                if deleted_orphaned > 0:
+                    parts.append(f"Зайвих видалено: {deleted_orphaned}")
+                self.set_status(" | ".join(parts), 100)
         except urllib.error.HTTPError as e:
             self.set_status(f"❌ HTTP помилка {e.code}", 0)
             self.show_alert("Помилка", f"Сервер недоступний ({SERVER_URL})", "error")
@@ -738,15 +748,20 @@ class LauncherApp:
                     shell=False
                 )
             self.set_status("🎮 Гра запущена!", 100)
-        except OSError as e:
-            error_code = getattr(e, 'winerror', None) or getattr(e, 'errno', 0)
-            if error_code == 740:
-                # Elevation required — try ShellExecuteW
+        except Exception as e:
+            # Broad check for elevation error (740)
+            err_str = str(e).lower()
+            is_elevation_error = (
+                getattr(e, 'winerror', 0) == 740 or
+                getattr(e, 'errno', 0) == 740 or
+                '740' in err_str or
+                'elevation' in err_str or
+                'requires elevation' in err_str
+            )
+            if is_elevation_error and os.name == 'nt':
                 self._try_elevated_launch(exe_path, sys_dir)
             else:
                 raise Exception(f"Не вдалося запустити гру: {e}")
-        except Exception as e:
-            raise Exception(f"Не вдалося запустити гру: {e}")
 
     def _try_elevated_launch(self, exe_path, sys_dir):
         """Try to launch with UAC elevation using ShellExecuteW."""
@@ -758,15 +773,29 @@ class LauncherApp:
                     f"IP={SERVER_IP}", sys_dir, 1
                 )
                 if ret <= 32:
-                    raise Exception(f"ShellExecute failed with code {ret}")
-                self.set_status("🎮 Гра запущена з правами адміністратора!", 100)
+                    # Error codes: https://docs.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
+                    if ret == 5:
+                        raise Exception("Відмовлено в доступі (користувач відхилив UAC)")
+                    elif ret == 8:
+                        raise Exception("Недостатньо пам'яті")
+                    elif ret == 27:
+                        raise Exception("Помилка асоціації файлу")
+                    elif ret == 31:
+                        raise Exception("Не знайдено програму для запуску .exe")
+                    elif ret == 1155:
+                        raise Exception("Не вказано програму для відкриття цього файлу")
+                    else:
+                        raise Exception(f"ShellExecute повернув код помилки {ret}")
+                # If ret > 32, ShellExecute succeeded — UAC prompt was shown
+                self.set_status("🎮 Запит прав адміністратора відправлено. Підтвердіть UAC.", 100)
             except Exception as e2:
+                # If ShellExecuteW itself failed, show instructions
                 raise Exception(
                     f"Гра потребує прав адміністратора для запуску.\n\n"
                     f"Варіанти вирішення:\n"
-                    f"1. Натисніть кнопку Запустити ще раз і підтвердіть UAC\n"
-                    f"2. Запустіть лаунчер від імені адміністратора (ПКМ → Запустити від імені адміністратора)\n\n"
-                    f"Помилка: {e2}"
+                    f"1. Натисніть кнопку Запустити — з'явиться запит UAC → Підтвердіть\n"
+                    f"2. Закрийте лаунчер, натисніть ПКМ на ярлику → Запустити від імені адміністратора\n\n"
+                    f"Технічна інформація: {e2}"
                 )
         else:
             raise Exception("Гра потребує прав адміністратора для запуску.")
